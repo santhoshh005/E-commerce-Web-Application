@@ -21,7 +21,7 @@ export function Footer() {
             Built with <span className="font-semibold text-foreground">Next.js App Router</span>,{" "}
             <span className="font-semibold text-foreground">Prisma Client</span>,{" "}
             <span className="font-semibold text-foreground">Tailwind CSS v4</span>, and{" "}
-            <span className="font-semibold text-foreground">SQLite</span>.
+            <span className="font-semibold text-foreground">Supabase PostgreSQL</span>.
           </p>
 
           {/* External mock/developer link */}
