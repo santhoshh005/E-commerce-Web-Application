@@ -1,0 +1,62 @@
+export const defaultAdmin = {
+  name: "Store Admin",
+  email: "admin@santhosh.store",
+  password: "Admin123!",
+};
+
+export const demoProducts = [
+  {
+    name: "Aurora Knit Sneaker",
+    description: "Lightweight everyday sneaker with a breathable knit upper and cushioned sole.",
+    category: "Footwear",
+    price: 9600,
+    inventory: 18,
+    featured: true,
+    rating: 4.8,
+  },
+  {
+    name: "Northstar Field Jacket",
+    description: "Weather-ready shell jacket built for city commutes and weekend hikes.",
+    category: "Outerwear",
+    price: 18200,
+    inventory: 10,
+    featured: true,
+    rating: 4.7,
+  },
+  {
+    name: "Form Studio Backpack",
+    description: "Structured backpack with a laptop sleeve, bottle pockets, and concealed storage.",
+    category: "Accessories",
+    price: 13200,
+    inventory: 24,
+    featured: false,
+    rating: 4.6,
+  },
+  {
+    name: "Mono Desk Lamp",
+    description: "Adjustable LED desk lamp with warm and neutral lighting modes.",
+    category: "Home Office",
+    price: 5400,
+    inventory: 14,
+    featured: false,
+    rating: 4.4,
+  },
+  {
+    name: "Terra Ceramic Mug Set",
+    description: "Two-tone ceramic mugs designed for coffee, tea, and a calmer morning ritual.",
+    category: "Kitchen",
+    price: 3800,
+    inventory: 32,
+    featured: false,
+    rating: 4.9,
+  },
+  {
+    name: "Pulse Wireless Earbuds",
+    description: "Pocketable earbuds with active noise cancellation and all-day battery life.",
+    category: "Electronics",
+    price: 14900,
+    inventory: 21,
+    featured: true,
+    rating: 4.5,
+  },
+] as const;
