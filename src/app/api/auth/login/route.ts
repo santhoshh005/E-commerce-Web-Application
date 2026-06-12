@@ -12,50 +12,58 @@ const loginSchema = z.object({
 });
 
 export async function POST(request: Request) {
-  await ensureStoreSeeded();
+  try {
+    await ensureStoreSeeded();
 
-  const parsed = loginSchema.safeParse(await request.json());
+    const parsed = loginSchema.safeParse(await request.json());
 
-  if (!parsed.success) {
+    if (!parsed.success) {
+      return NextResponse.json(
+        { error: parsed.error.issues[0]?.message ?? "Invalid login data" },
+        { status: 400 },
+      );
+    }
+
+    const user = await prisma.user.findUnique({
+      where: { email: parsed.data.email.toLowerCase() },
+      select: {
+        id: true,
+        name: true,
+        email: true,
+        role: true,
+        passwordHash: true,
+      },
+    });
+
+    if (!user || !(await comparePassword(parsed.data.password, user.passwordHash))) {
+      return NextResponse.json({ error: "Invalid email or password" }, { status: 401 });
+    }
+
+    const sessionUser = {
+      id: user.id,
+      name: user.name,
+      email: user.email,
+      role: user.role,
+    };
+
+    const response = NextResponse.json({ user: sessionUser });
+
+    response.cookies.set({
+      name: "santhosh_store_session",
+      value: signSession(sessionUser),
+      httpOnly: true,
+      sameSite: "lax",
+      secure: process.env.NODE_ENV === "production",
+      path: "/",
+      maxAge: 60 * 60 * 24 * 7,
+    });
+
+    return response;
+  } catch (error: any) {
+    console.error("Login API Error:", error);
     return NextResponse.json(
-      { error: parsed.error.issues[0]?.message ?? "Invalid login data" },
-      { status: 400 },
+      { error: error instanceof Error ? error.message : "An unexpected server error occurred" },
+      { status: 500 }
     );
   }
-
-  const user = await prisma.user.findUnique({
-    where: { email: parsed.data.email.toLowerCase() },
-    select: {
-      id: true,
-      name: true,
-      email: true,
-      role: true,
-      passwordHash: true,
-    },
-  });
-
-  if (!user || !(await comparePassword(parsed.data.password, user.passwordHash))) {
-    return NextResponse.json({ error: "Invalid email or password" }, { status: 401 });
-  }
-
-  const sessionUser = {
-    id: user.id,
-    name: user.name,
-    email: user.email,
-    role: user.role,
-  };
-
-  const response = NextResponse.json({ user: sessionUser });
-
-  response.cookies.set({
-    name: "santhosh_store_session",
-    value: signSession(sessionUser),
-    httpOnly: true,
-    sameSite: "lax",
-    secure: process.env.NODE_ENV === "production",
-    path: "/",
-    maxAge: 60 * 60 * 24 * 7,
-  });
-
-  return response;
 }

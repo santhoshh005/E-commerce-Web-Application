@@ -46,7 +46,14 @@ export function AuthModal() {
         body: JSON.stringify(payload),
       });
 
-      const data = await response.json();
+      let data: any = {};
+      const contentType = response.headers.get("content-type");
+      if (contentType && contentType.includes("application/json")) {
+        data = await response.json();
+      } else {
+        const text = await response.text();
+        throw new Error(`Server returned status ${response.status}: ${text.slice(0, 150) || "No response details"}`);
+      }
 
       if (!response.ok) {
         throw new Error(data.error ?? "Authentication failed");
