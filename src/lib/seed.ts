@@ -7,10 +7,9 @@ import { defaultAdmin, demoProducts } from "@/lib/store-data";
 let seedPromise: Promise<void> | null = null;
 
 async function seedStore() {
-  const [adminCount, productCount] = await Promise.all([
-    prisma.user.count({ where: { email: defaultAdmin.email } }),
-    prisma.product.count(),
-  ]);
+  const adminCount = await prisma.user.count({
+    where: { email: defaultAdmin.email },
+  });
 
   if (adminCount === 0) {
     await prisma.user.create({
@@ -23,8 +22,23 @@ async function seedStore() {
     });
   }
 
-  if (productCount === 0) {
-    await prisma.product.createMany({ data: [...demoProducts] });
+  for (const item of demoProducts) {
+    const exists = await prisma.product.findFirst({
+      where: { name: item.name },
+    });
+    if (!exists) {
+      await prisma.product.create({
+        data: {
+          name: item.name,
+          description: item.description,
+          category: item.category,
+          price: item.price,
+          inventory: item.inventory,
+          featured: item.featured,
+          rating: item.rating,
+        },
+      });
+    }
   }
 }
 

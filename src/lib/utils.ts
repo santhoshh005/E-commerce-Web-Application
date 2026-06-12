@@ -20,6 +20,12 @@ export const productImageMap: Record<string, string> = {
     "/terra-ceramic-mug.png",
   "Pulse Wireless Earbuds":
     "https://images.unsplash.com/photo-1590658268037-6bf12165a8df?auto=format&fit=crop&w=900&q=80",
+  "Helios Leather Wallet":
+    "https://images.unsplash.com/photo-1627123424574-724758594e93?auto=format&fit=crop&w=900&q=80",
+  "Aero Mechanical Keyboard":
+    "https://images.unsplash.com/photo-1618384887929-16ec33fab9ef?auto=format&fit=crop&w=900&q=80",
+  "Nomad Insulated Tumbler":
+    "https://images.unsplash.com/photo-1577937927133-66ef06acdf18?auto=format&fit=crop&w=900&q=80",
 };
 
 export function getProductImage(productName: string) {
