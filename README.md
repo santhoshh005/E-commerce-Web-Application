@@ -2,6 +2,8 @@
 
 A small full-stack e-commerce demo built with Next.js, Prisma, PostgreSQL, and JWT-based auth.
 
+**Live Demo:** [https://e-commerce-web-application-sbmi.vercel.app/](https://e-commerce-web-application-sbmi.vercel.app/)
+
 ## Features
 
 - Product catalog with seeded demo inventory
