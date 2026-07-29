@@ -12,6 +12,9 @@ function createPrismaClient() {
     throw new Error("DATABASE_URL must be defined");
   }
   const pool = new Pool({ connectionString: dbUrl });
+  pool.on('connect', (client) => {
+    client.query('SET search_path TO ecommerce');
+  });
   const adapter = new PrismaPg(pool);
   return new PrismaClient({ adapter });
 }
