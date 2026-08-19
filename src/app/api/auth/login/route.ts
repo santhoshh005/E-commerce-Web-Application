@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { z } from "zod";
 
 import { signSession } from "@/lib/auth";
+import { withDbRetry } from "@/lib/db-retry";
 import { prisma } from "@/lib/prisma";
 import { ensureStoreSeeded } from "@/lib/seed";
 import { comparePassword } from "@/lib/security";
@@ -13,7 +14,7 @@ const loginSchema = z.object({
 
 export async function POST(request: Request) {
   try {
-    await ensureStoreSeeded();
+    await withDbRetry(() => ensureStoreSeeded());
 
     const parsed = loginSchema.safeParse(await request.json());
 
@@ -59,11 +60,12 @@ export async function POST(request: Request) {
     });
 
     return response;
-  } catch (error: any) {
-    console.error("Login API Error:", error);
+  } catch (error: unknown) {
+    const message = error instanceof Error ? error.message : String(error);
+    console.error("[Login API] Error:", message);
     return NextResponse.json(
-      { error: error instanceof Error ? error.message : "An unexpected server error occurred" },
-      { status: 500 }
+      { error: "Service temporarily unavailable. Please try again." },
+      { status: 503 },
     );
   }
 }

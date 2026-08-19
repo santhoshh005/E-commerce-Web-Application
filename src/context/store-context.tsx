@@ -113,21 +113,35 @@ type StoreContextType = {
 const StoreContext = createContext<StoreContextType | undefined>(undefined);
 
 async function fetchJson<T>(url: string, init?: RequestInit): Promise<T> {
-  const response = await fetch(url, {
-    ...init,
-    headers: {
-      "Content-Type": "application/json",
-      ...(init?.headers ?? {}),
-    },
-  });
+  const MAX_RETRIES = 3;
+  const RETRY_DELAY = 3000;
 
-  const payload = (await response.json().catch(() => ({}))) as { error?: string } & T;
+  for (let attempt = 1; attempt <= MAX_RETRIES; attempt++) {
+    const response = await fetch(url, {
+      ...init,
+      headers: {
+        "Content-Type": "application/json",
+        ...(init?.headers ?? {}),
+      },
+    });
 
-  if (!response.ok) {
-    throw new Error(payload.error ?? "Request failed");
+    // If database is waking up, wait and retry
+    if (response.status === 503 && attempt < MAX_RETRIES) {
+      await new Promise((r) => setTimeout(r, RETRY_DELAY * attempt));
+      continue;
+    }
+
+    const payload = (await response.json().catch(() => ({}))) as { error?: string } & T;
+
+    if (!response.ok) {
+      throw new Error(payload.error ?? "Request failed");
+    }
+
+    return payload;
   }
 
-  return payload;
+  // Final attempt fallback - should not normally reach here
+  throw new Error("Service temporarily unavailable. Please try again.");
 }
 
 let toastIdCounter = 0;

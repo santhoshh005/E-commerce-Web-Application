@@ -11,9 +11,18 @@ function createPrismaClient() {
   if (!dbUrl) {
     throw new Error("DATABASE_URL must be defined");
   }
-  const pool = new Pool({ connectionString: dbUrl });
-  pool.on('connect', (client) => {
-    client.query('SET search_path TO ecommerce');
+  const pool = new Pool({
+    connectionString: dbUrl,
+    // Auto-reconnect settings for Supabase free-tier pause/wake
+    connectionTimeoutMillis: 10000,
+    idleTimeoutMillis: 30000,
+    max: 5,
+  });
+  pool.on("connect", (client) => {
+    client.query("SET search_path TO ecommerce");
+  });
+  pool.on("error", (err) => {
+    console.error("[PG Pool] Unexpected error on idle client:", err.message);
   });
   const adapter = new PrismaPg(pool);
   return new PrismaClient({ adapter });

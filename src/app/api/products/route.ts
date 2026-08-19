@@ -3,6 +3,7 @@ import { NextResponse } from "next/server";
 import { z } from "zod";
 
 import { getSessionUser } from "@/lib/auth";
+import { withDbRetry } from "@/lib/db-retry";
 import { prisma } from "@/lib/prisma";
 import { ensureStoreSeeded } from "@/lib/seed";
 
@@ -17,34 +18,53 @@ const productSchema = z.object({
 });
 
 export async function GET() {
-  await ensureStoreSeeded();
+  try {
+    const products = await withDbRetry(async () => {
+      await ensureStoreSeeded();
+      return prisma.product.findMany({
+        orderBy: [{ featured: "desc" }, { updatedAt: "desc" }],
+      });
+    });
 
-  const products = await prisma.product.findMany({
-    orderBy: [{ featured: "desc" }, { updatedAt: "desc" }],
-  });
-
-  return NextResponse.json({ products });
+    return NextResponse.json({ products });
+  } catch (error: unknown) {
+    const message = error instanceof Error ? error.message : String(error);
+    console.error("[Products API] Error:", message);
+    return NextResponse.json(
+      { error: "Database is waking up. Please refresh in a few seconds.", products: [] },
+      { status: 503 },
+    );
+  }
 }
 
 export async function POST(request: Request) {
-  await ensureStoreSeeded();
+  try {
+    await withDbRetry(() => ensureStoreSeeded());
 
-  const session = await getSessionUser();
+    const session = await getSessionUser();
 
-  if (!session || session.role !== UserRole.ADMIN) {
-    return NextResponse.json({ error: "Admin access required" }, { status: 403 });
-  }
+    if (!session || session.role !== UserRole.ADMIN) {
+      return NextResponse.json({ error: "Admin access required" }, { status: 403 });
+    }
 
-  const parsed = productSchema.safeParse(await request.json());
+    const parsed = productSchema.safeParse(await request.json());
 
-  if (!parsed.success) {
+    if (!parsed.success) {
+      return NextResponse.json(
+        { error: parsed.error.issues[0]?.message ?? "Invalid product data" },
+        { status: 400 },
+      );
+    }
+
+    const product = await prisma.product.create({ data: parsed.data });
+
+    return NextResponse.json({ product }, { status: 201 });
+  } catch (error: unknown) {
+    const message = error instanceof Error ? error.message : String(error);
+    console.error("[Products POST] Error:", message);
     return NextResponse.json(
-      { error: parsed.error.issues[0]?.message ?? "Invalid product data" },
-      { status: 400 },
+      { error: "Service temporarily unavailable. Please try again." },
+      { status: 503 },
     );
   }
-
-  const product = await prisma.product.create({ data: parsed.data });
-
-  return NextResponse.json({ product }, { status: 201 });
 }
