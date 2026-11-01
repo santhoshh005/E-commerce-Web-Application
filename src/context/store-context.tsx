@@ -225,17 +225,23 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
   useEffect(() => {
     async function bootstrap() {
       try {
-        const [{ products: catalog }, { user }] = await Promise.all([
+        const [productsResult, authResult] = await Promise.allSettled([
           fetchJson<{ products: Product[] }>("/api/products"),
           fetchJson<{ user: SessionUser | null }>("/api/auth/me"),
         ]);
 
-        setProducts(catalog);
-        setSession(user);
+        if (productsResult.status === "fulfilled") {
+          setProducts(productsResult.value.products);
+        }
 
-        if (user) {
-          const { orders: fetchedOrders } = await fetchJson<{ orders: Order[] }>("/api/orders");
-          setOrders(fetchedOrders);
+        if (authResult.status === "fulfilled") {
+          const user = authResult.value.user;
+          setSession(user);
+
+          if (user) {
+            const { orders: fetchedOrders } = await fetchJson<{ orders: Order[] }>("/api/orders");
+            setOrders(fetchedOrders);
+          }
         }
       } catch (error) {
         console.error("Store initialization error:", error);
