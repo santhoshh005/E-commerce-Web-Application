@@ -3,7 +3,11 @@ import { NextResponse } from "next/server";
 import { z } from "zod";
 
 import { getSessionUser } from "@/lib/auth";
-import { withDbRetry } from "@/lib/db-retry";
+import { executeWithFallback } from "@/lib/db-retry";
+import {
+  createFallbackOrder,
+  getFallbackOrders,
+} from "@/lib/fallback-store";
 import { prisma } from "@/lib/prisma";
 import { ensureStoreSeeded } from "@/lib/seed";
 
@@ -37,58 +41,67 @@ function serializeOrder(order: {
 }) {
   return {
     ...order,
-    createdAt: order.createdAt.toISOString(),
-    updatedAt: order.updatedAt.toISOString(),
+    createdAt: order.createdAt instanceof Date ? order.createdAt.toISOString() : String(order.createdAt),
+    updatedAt: order.updatedAt instanceof Date ? order.updatedAt.toISOString() : String(order.updatedAt),
   };
 }
 
 export async function GET() {
   try {
-    await withDbRetry(() => ensureStoreSeeded());
-
     const session = await getSessionUser();
 
     if (!session) {
       return NextResponse.json({ error: "Sign in to view orders" }, { status: 401 });
     }
 
-    const orders = await prisma.order.findMany({
-      where:
-        session.role === UserRole.ADMIN
-          ? undefined
-          : {
-              userId: session.id,
-            },
-      orderBy: { createdAt: "desc" },
-      include: {
-        user: {
-          select: { id: true, name: true, email: true, role: true },
-        },
-        items: {
+    const { data: orders, isFallback } = await executeWithFallback(
+      async () => {
+        await ensureStoreSeeded();
+        return prisma.order.findMany({
+          where:
+            session.role === UserRole.ADMIN
+              ? undefined
+              : {
+                  userId: session.id,
+                },
+          orderBy: { createdAt: "desc" },
           include: {
-            product: {
-              select: { id: true, name: true, category: true, price: true },
+            user: {
+              select: { id: true, name: true, email: true, role: true },
+            },
+            items: {
+              include: {
+                product: {
+                  select: { id: true, name: true, category: true, price: true },
+                },
+              },
             },
           },
+        });
+      },
+      () => {
+        return getFallbackOrders(session.id, session.role === UserRole.ADMIN);
+      },
+      2500,
+    );
+
+    return NextResponse.json(
+      { orders: orders.map(serializeOrder) },
+      {
+        headers: {
+          "x-data-source": isFallback ? "in-memory-fallback" : "supabase-postgres",
         },
       },
-    });
-
-    return NextResponse.json({ orders: orders.map(serializeOrder) });
+    );
   } catch (error: unknown) {
     const message = error instanceof Error ? error.message : String(error);
     console.error("[Orders GET] Error:", message);
-    return NextResponse.json(
-      { error: "Service temporarily unavailable. Please try again.", orders: [] },
-      { status: 503 },
-    );
+    return NextResponse.json({ orders: [] });
   }
 }
 
 export async function POST(request: Request) {
   try {
-    await withDbRetry(() => ensureStoreSeeded());
-
     const session = await getSessionUser();
 
     if (!session) {
@@ -114,83 +127,105 @@ export async function POST(request: Request) {
 
     const productIds = Object.keys(quantitiesByProductId);
 
-    const order = await prisma.$transaction(async (transaction) => {
-      const products = await transaction.product.findMany({
-        where: { id: { in: productIds } },
-      });
+    const { data: order, isFallback } = await executeWithFallback(
+      async () => {
+        await ensureStoreSeeded();
 
-      if (products.length !== productIds.length) {
-        throw new Error("One or more products are unavailable");
-      }
+        return prisma.$transaction(async (transaction) => {
+          const products = await transaction.product.findMany({
+            where: { id: { in: productIds } },
+          });
 
-      const productMap = new Map(products.map((product) => [product.id, product]));
-      let subtotal = 0;
+          if (products.length !== productIds.length) {
+            throw new Error("One or more products are unavailable");
+          }
 
-      for (const [productId, quantity] of Object.entries(quantitiesByProductId)) {
-        const product = productMap.get(productId);
+          const productMap = new Map(products.map((product) => [product.id, product]));
+          let subtotal = 0;
 
-        if (!product || product.inventory < quantity) {
-          throw new Error(`Insufficient inventory for ${product?.name ?? productId}`);
-        }
+          for (const [productId, quantity] of Object.entries(quantitiesByProductId)) {
+            const product = productMap.get(productId);
 
-        subtotal += product.price * quantity;
-      }
+            if (!product || product.inventory < quantity) {
+              throw new Error(`Insufficient inventory for ${product?.name ?? productId}`);
+            }
 
-      const shippingFee = subtotal >= 15000 ? 0 : 1200;
+            subtotal += product.price * quantity;
+          }
 
-      const createdOrder = await transaction.order.create({
-        data: {
-          userId: session.id,
-          status: OrderStatus.PENDING,
-          subtotal,
-          shippingFee,
-          total: subtotal + shippingFee,
-          items: {
-            create: Object.entries(quantitiesByProductId).map(([productId, quantity]) => {
-              const product = productMap.get(productId)!;
+          const shippingFee = subtotal >= 15000 ? 0 : 1200;
 
-              return {
-                productId,
-                quantity,
-                unitPrice: product.price,
-                lineTotal: product.price * quantity,
-              };
-            }),
-          },
-        },
-        include: {
-          user: {
-            select: { id: true, name: true, email: true, role: true },
-          },
-          items: {
-            include: {
-              product: {
-                select: { id: true, name: true, category: true, price: true },
+          const createdOrder = await transaction.order.create({
+            data: {
+              userId: session.id,
+              status: OrderStatus.PAID,
+              subtotal,
+              shippingFee,
+              total: subtotal + shippingFee,
+              items: {
+                create: Object.entries(quantitiesByProductId).map(([productId, quantity]) => {
+                  const product = productMap.get(productId)!;
+
+                  return {
+                    productId,
+                    quantity,
+                    unitPrice: product.price,
+                    lineTotal: product.price * quantity,
+                  };
+                }),
               },
             },
-          },
+            include: {
+              user: {
+                select: { id: true, name: true, email: true, role: true },
+              },
+              items: {
+                include: {
+                  product: {
+                    select: { id: true, name: true, category: true, price: true },
+                  },
+                },
+              },
+            },
+          });
+
+          await Promise.all(
+            Object.entries(quantitiesByProductId).map(([productId, quantity]) =>
+              transaction.product.update({
+                where: { id: productId },
+                data: { inventory: { decrement: quantity } },
+              }),
+            ),
+          );
+
+          return createdOrder;
+        });
+      },
+      () => {
+        return createFallbackOrder({
+          userId: session.id,
+          items: parsed.data.items,
+          user: session,
+        });
+      },
+      2500,
+    );
+
+    return NextResponse.json(
+      { order: serializeOrder(order) },
+      {
+        status: 201,
+        headers: {
+          "x-data-source": isFallback ? "in-memory-fallback" : "supabase-postgres",
         },
-      });
-
-      await Promise.all(
-        Object.entries(quantitiesByProductId).map(([productId, quantity]) =>
-          transaction.product.update({
-            where: { id: productId },
-            data: { inventory: { decrement: quantity } },
-          }),
-        ),
-      );
-
-      return createdOrder;
-    });
-
-    return NextResponse.json({ order: serializeOrder(order) }, { status: 201 });
+      },
+    );
   } catch (error: unknown) {
     const message = error instanceof Error ? error.message : String(error);
     console.error("[Orders POST] Error:", message);
     return NextResponse.json(
-      { error: "Service temporarily unavailable. Please try again." },
-      { status: 503 },
+      { error: message.includes("inventory") || message.includes("unavailable") ? message : "Order creation failed" },
+      { status: 400 },
     );
   }
 }

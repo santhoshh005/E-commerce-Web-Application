@@ -44,5 +44,11 @@ next-env.d.ts
 *.db
 *.db-journal
 
+# documents and report exports
+*.docx
+*.pdf
+public/figma_exports/
+public/report_images/
+
 # agent skills
 /.agents

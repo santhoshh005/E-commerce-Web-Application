@@ -3,7 +3,8 @@ import { NextResponse } from "next/server";
 import { z } from "zod";
 
 import { getSessionUser } from "@/lib/auth";
-import { withDbRetry } from "@/lib/db-retry";
+import { executeWithFallback } from "@/lib/db-retry";
+import { createFallbackProduct, getFallbackProducts } from "@/lib/fallback-store";
 import { prisma } from "@/lib/prisma";
 import { ensureStoreSeeded } from "@/lib/seed";
 
@@ -19,28 +20,34 @@ const productSchema = z.object({
 
 export async function GET() {
   try {
-    const products = await withDbRetry(async () => {
-      await ensureStoreSeeded();
-      return prisma.product.findMany({
-        orderBy: [{ featured: "desc" }, { updatedAt: "desc" }],
-      });
-    });
+    const { data: products, isFallback } = await executeWithFallback(
+      async () => {
+        await ensureStoreSeeded();
+        return prisma.product.findMany({
+          orderBy: [{ featured: "desc" }, { updatedAt: "desc" }],
+        });
+      },
+      () => getFallbackProducts(),
+      2500,
+    );
 
-    return NextResponse.json({ products });
+    return NextResponse.json(
+      { products },
+      {
+        headers: {
+          "x-data-source": isFallback ? "in-memory-fallback" : "supabase-postgres",
+        },
+      },
+    );
   } catch (error: unknown) {
     const message = error instanceof Error ? error.message : String(error);
     console.error("[Products API] Error:", message);
-    return NextResponse.json(
-      { error: "Database is waking up. Please refresh in a few seconds.", products: [] },
-      { status: 503 },
-    );
+    return NextResponse.json({ products: getFallbackProducts() });
   }
 }
 
 export async function POST(request: Request) {
   try {
-    await withDbRetry(() => ensureStoreSeeded());
-
     const session = await getSessionUser();
 
     if (!session || session.role !== UserRole.ADMIN) {
@@ -56,15 +63,30 @@ export async function POST(request: Request) {
       );
     }
 
-    const product = await prisma.product.create({ data: parsed.data });
+    const { data: product, isFallback } = await executeWithFallback(
+      async () => {
+        await ensureStoreSeeded();
+        return prisma.product.create({ data: parsed.data });
+      },
+      () => createFallbackProduct(parsed.data),
+      2500,
+    );
 
-    return NextResponse.json({ product }, { status: 201 });
+    return NextResponse.json(
+      { product },
+      {
+        status: 201,
+        headers: {
+          "x-data-source": isFallback ? "in-memory-fallback" : "supabase-postgres",
+        },
+      },
+    );
   } catch (error: unknown) {
     const message = error instanceof Error ? error.message : String(error);
     console.error("[Products POST] Error:", message);
     return NextResponse.json(
-      { error: "Service temporarily unavailable. Please try again." },
-      { status: 503 },
+      { error: "Failed to create product" },
+      { status: 500 },
     );
   }
 }

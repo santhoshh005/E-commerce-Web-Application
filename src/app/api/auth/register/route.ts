@@ -3,7 +3,8 @@ import { NextResponse } from "next/server";
 import { z } from "zod";
 
 import { signSession } from "@/lib/auth";
-import { withDbRetry } from "@/lib/db-retry";
+import { executeWithFallback } from "@/lib/db-retry";
+import { createFallbackUser, getFallbackUserByEmail } from "@/lib/fallback-store";
 import { prisma } from "@/lib/prisma";
 import { ensureStoreSeeded } from "@/lib/seed";
 import { hashPassword } from "@/lib/security";
@@ -16,8 +17,6 @@ const registerSchema = z.object({
 
 export async function POST(request: Request) {
   try {
-    await withDbRetry(() => ensureStoreSeeded());
-
     const parsed = registerSchema.safeParse(await request.json());
 
     if (!parsed.success) {
@@ -28,31 +27,64 @@ export async function POST(request: Request) {
     }
 
     const email = parsed.data.email.toLowerCase();
-    const existingUser = await prisma.user.findUnique({ where: { email } });
+    const hashedPassword = await hashPassword(parsed.data.password);
 
-    if (existingUser) {
-      return NextResponse.json(
-        { error: "An account with this email already exists" },
-        { status: 409 },
-      );
-    }
+    const { data: user, isFallback } = await executeWithFallback(
+      async () => {
+        await ensureStoreSeeded();
 
-    const user = await prisma.user.create({
-      data: {
-        name: parsed.data.name,
-        email,
-        passwordHash: await hashPassword(parsed.data.password),
-        role: UserRole.USER,
+        const existingUser = await prisma.user.findUnique({ where: { email } });
+        if (existingUser) {
+          throw new Error("EXISTS");
+        }
+
+        return prisma.user.create({
+          data: {
+            name: parsed.data.name,
+            email,
+            passwordHash: hashedPassword,
+            role: UserRole.USER,
+          },
+          select: {
+            id: true,
+            name: true,
+            email: true,
+            role: true,
+          },
+        });
       },
-      select: {
-        id: true,
-        name: true,
-        email: true,
-        role: true,
-      },
-    });
+      () => {
+        const existingFallback = getFallbackUserByEmail(email);
+        if (existingFallback) {
+          throw new Error("EXISTS");
+        }
 
-    const response = NextResponse.json({ user }, { status: 201 });
+        const created = createFallbackUser({
+          name: parsed.data.name,
+          email,
+          passwordHash: hashedPassword,
+          role: UserRole.USER,
+        });
+
+        return {
+          id: created.id,
+          name: created.name,
+          email: created.email,
+          role: created.role,
+        };
+      },
+      2500,
+    );
+
+    const response = NextResponse.json(
+      { user },
+      {
+        status: 201,
+        headers: {
+          "x-data-source": isFallback ? "in-memory-fallback" : "supabase-postgres",
+        },
+      },
+    );
 
     response.cookies.set({
       name: "santhosh_store_session",
@@ -67,10 +99,17 @@ export async function POST(request: Request) {
     return response;
   } catch (error: unknown) {
     const message = error instanceof Error ? error.message : String(error);
+    if (message === "EXISTS") {
+      return NextResponse.json(
+        { error: "An account with this email already exists" },
+        { status: 409 },
+      );
+    }
+
     console.error("[Register API] Error:", message);
     return NextResponse.json(
-      { error: "Service temporarily unavailable. Please try again." },
-      { status: 503 },
+      { error: "Registration temporarily unavailable. Please try again." },
+      { status: 500 },
     );
   }
 }

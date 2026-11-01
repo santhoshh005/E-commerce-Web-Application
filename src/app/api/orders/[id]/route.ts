@@ -3,6 +3,11 @@ import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 
 import { getSessionUser } from "@/lib/auth";
+import { executeWithFallback } from "@/lib/db-retry";
+import {
+  getFallbackOrderById,
+  updateFallbackOrderStatus,
+} from "@/lib/fallback-store";
 import { prisma } from "@/lib/prisma";
 import { ensureStoreSeeded } from "@/lib/seed";
 
@@ -24,8 +29,8 @@ function serializeOrder(order: {
 }) {
   return {
     ...order,
-    createdAt: order.createdAt.toISOString(),
-    updatedAt: order.updatedAt.toISOString(),
+    createdAt: order.createdAt instanceof Date ? order.createdAt.toISOString() : String(order.createdAt),
+    updatedAt: order.updatedAt instanceof Date ? order.updatedAt.toISOString() : String(order.updatedAt),
   };
 }
 
@@ -33,8 +38,6 @@ export async function GET(
   _request: NextRequest,
   { params }: { params: Promise<{ id: string }> },
 ) {
-  await ensureStoreSeeded();
-
   const session = await getSessionUser();
   const { id } = await params;
 
@@ -42,17 +45,26 @@ export async function GET(
     return NextResponse.json({ error: "Sign in to view this order" }, { status: 401 });
   }
 
-  const order = await prisma.order.findUnique({
-    where: { id },
-    include: {
-      user: { select: { id: true, name: true, email: true, role: true } },
-      items: {
+  const { data: order } = await executeWithFallback(
+    async () => {
+      await ensureStoreSeeded();
+      return prisma.order.findUnique({
+        where: { id },
         include: {
-          product: { select: { id: true, name: true, category: true, price: true } },
+          user: { select: { id: true, name: true, email: true, role: true } },
+          items: {
+            include: {
+              product: { select: { id: true, name: true, category: true, price: true } },
+            },
+          },
         },
-      },
+      });
     },
-  });
+    () => {
+      return getFallbackOrderById(id) ?? null;
+    },
+    2500,
+  );
 
   if (!order || (session.role !== UserRole.ADMIN && order.userId !== session.id)) {
     return NextResponse.json({ error: "Order not found" }, { status: 404 });
@@ -65,8 +77,6 @@ export async function PATCH(
   request: NextRequest,
   { params }: { params: Promise<{ id: string }> },
 ) {
-  await ensureStoreSeeded();
-
   const session = await getSessionUser();
   const { id } = await params;
 
@@ -84,18 +94,29 @@ export async function PATCH(
   }
 
   try {
-    const order = await prisma.order.update({
-      where: { id },
-      data: { status: parsed.data.status },
-      include: {
-        user: { select: { id: true, name: true, email: true, role: true } },
-        items: {
+    const { data: order } = await executeWithFallback(
+      async () => {
+        await ensureStoreSeeded();
+        return prisma.order.update({
+          where: { id },
+          data: { status: parsed.data.status },
           include: {
-            product: { select: { id: true, name: true, category: true, price: true } },
+            user: { select: { id: true, name: true, email: true, role: true } },
+            items: {
+              include: {
+                product: { select: { id: true, name: true, category: true, price: true } },
+              },
+            },
           },
-        },
+        });
       },
-    });
+      () => {
+        const updated = updateFallbackOrderStatus(id, parsed.data.status);
+        if (!updated) throw new Error("Order not found");
+        return updated;
+      },
+      2500,
+    );
 
     return NextResponse.json({ order: serializeOrder(order) });
   } catch {

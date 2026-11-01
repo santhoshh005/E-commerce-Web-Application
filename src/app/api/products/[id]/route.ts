@@ -3,6 +3,11 @@ import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 
 import { getSessionUser } from "@/lib/auth";
+import { executeWithFallback } from "@/lib/db-retry";
+import {
+  deleteFallbackProduct,
+  updateFallbackProduct,
+} from "@/lib/fallback-store";
 import { prisma } from "@/lib/prisma";
 import { ensureStoreSeeded } from "@/lib/seed";
 
@@ -24,8 +29,6 @@ export async function PATCH(
   request: NextRequest,
   { params }: { params: Promise<{ id: string }> },
 ) {
-  await ensureStoreSeeded();
-
   const session = await getSessionUser();
   const { id } = await params;
 
@@ -43,10 +46,23 @@ export async function PATCH(
   }
 
   try {
-    const product = await prisma.product.update({
-      where: { id },
-      data: parsed.data,
-    });
+    const { data: product } = await executeWithFallback(
+      async () => {
+        await ensureStoreSeeded();
+        return prisma.product.update({
+          where: { id },
+          data: parsed.data,
+        });
+      },
+      () => {
+        const fallback = updateFallbackProduct(id, parsed.data);
+        if (!fallback) {
+          throw new Error("Product not found");
+        }
+        return fallback;
+      },
+      2500,
+    );
 
     return NextResponse.json({ product });
   } catch {
@@ -58,8 +74,6 @@ export async function DELETE(
   _request: Request,
   { params }: { params: Promise<{ id: string }> },
 ) {
-  await ensureStoreSeeded();
-
   const session = await getSessionUser();
   const { id } = await params;
 
@@ -68,13 +82,21 @@ export async function DELETE(
   }
 
   try {
-    // Delete any dependent order items first or let it cascade/error (SQLite restricts if references exist without cascade).
-    // In our schema, OrderItem has productId and does not cascade. We should check if orderItems exist, or delete them or handle error.
-    // If orderItems reference the product, deleting it directly might throw a foreign key constraint error.
-    // Let's delete the product. If it throws, tell the user the product is referenced in active orders.
-    await prisma.product.delete({
-      where: { id },
-    });
+    await executeWithFallback(
+      async () => {
+        await ensureStoreSeeded();
+        await prisma.product.delete({
+          where: { id },
+        });
+        return true;
+      },
+      () => {
+        const deleted = deleteFallbackProduct(id);
+        if (!deleted) throw new Error("Product not found");
+        return true;
+      },
+      2500,
+    );
 
     return NextResponse.json({ success: true });
   } catch {
