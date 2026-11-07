@@ -1,4 +1,6 @@
 import { OrderStatus, UserRole } from "@prisma/client";
+import bcrypt from "bcryptjs";
+
 import { defaultAdmin, demoProducts } from "@/lib/store-data";
 
 export type FallbackProduct = {
@@ -80,35 +82,47 @@ function initialProducts(): FallbackProduct[] {
   }));
 }
 
+const isProduction = process.env.NODE_ENV === "production";
+
 function initialUsers(): FallbackUser[] {
-  return [
-    {
+  const users: FallbackUser[] = [];
+
+  // The fallback admin mirrors the seeded admin and uses the same
+  // env-provided password; it is omitted when no admin password is set.
+  if (defaultAdmin.password) {
+    users.push({
       id: "user-admin-fallback",
       name: defaultAdmin.name,
-      email: defaultAdmin.email.toLowerCase(),
-      // Precomputed bcrypt hash of "Admin123!"
-      passwordHash: "$2b$10$iRpzM4KDdwRwy6I0OLI0.u3UuChLja/jPJY0rE188jWR8iA9qrB5K",
+      email: defaultAdmin.email,
+      passwordHash: bcrypt.hashSync(defaultAdmin.password, 10),
       role: UserRole.ADMIN,
       createdAt: new Date("2026-07-01T12:00:00.000Z"),
       updatedAt: new Date("2026-07-01T12:00:00.000Z"),
-    },
-    {
+    });
+  }
+
+  // Demo shopper with a publicly known password: development only.
+  if (!isProduction) {
+    users.push({
       id: "user-demo-shopper",
       name: "Demo Shopper",
       email: "shopper@santhosh.store",
+      // Precomputed bcrypt hash of the demo password "Admin123!"
       passwordHash: "$2b$10$iRpzM4KDdwRwy6I0OLI0.u3UuChLja/jPJY0rE188jWR8iA9qrB5K",
       role: UserRole.USER,
       createdAt: new Date("2026-07-15T10:00:00.000Z"),
       updatedAt: new Date("2026-07-15T10:00:00.000Z"),
-    },
-  ];
+    });
+  }
+
+  return users;
 }
 
 function initialOrders(products: FallbackProduct[]): FallbackOrder[] {
   const p1 = products[0]; // Aurora Knit Sneaker ($96.00)
   const p6 = products[5]; // Pulse Wireless Earbuds ($149.00)
-  
-  if (!p1 || !p6) return [];
+
+  if (isProduction || !p1 || !p6) return [];
 
   const subtotal = p1.price * 1 + p6.price * 1;
   const shippingFee = subtotal >= 15000 ? 0 : 1200;
@@ -173,11 +187,6 @@ export function getFallbackProducts(): FallbackProduct[] {
     }
     return b.updatedAt.getTime() - a.updatedAt.getTime();
   });
-}
-
-export function getFallbackProductById(id: string): FallbackProduct | undefined {
-  const products = getFallbackProducts();
-  return products.find((p) => p.id === id);
 }
 
 export function createFallbackProduct(data: {
@@ -309,14 +318,20 @@ export function createFallbackOrder(data: {
   const orderItems: FallbackOrderItem[] = [];
   const orderId = `ord-fallback-${Date.now()}`;
 
+  // Validate every line before mutating inventory so a failing line
+  // does not leave earlier lines partially decremented.
   for (const item of data.items) {
     const product = productMap.get(item.productId);
     if (!product) {
-      throw new Error(`Product not found: ${item.productId}`);
+      throw new Error("One or more products are unavailable");
     }
     if (product.inventory < item.quantity) {
       throw new Error(`Insufficient inventory for ${product.name}`);
     }
+  }
+
+  for (const item of data.items) {
+    const product = productMap.get(item.productId)!;
 
     // Decrement inventory
     product.inventory -= item.quantity;

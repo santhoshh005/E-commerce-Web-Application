@@ -3,7 +3,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 
 import { getSessionUser } from "@/lib/auth";
-import { executeWithFallback } from "@/lib/db-retry";
+import { executeWithFallback, prismaErrorCode } from "@/lib/db-retry";
 import {
   getFallbackOrderById,
   updateFallbackOrderStatus,
@@ -12,7 +12,7 @@ import { prisma } from "@/lib/prisma";
 import { ensureStoreSeeded } from "@/lib/seed";
 
 const statusSchema = z.object({
-  status: z.nativeEnum(OrderStatus),
+  status: z.enum(OrderStatus),
 });
 
 function serializeOrder(order: {
@@ -45,7 +45,9 @@ export async function GET(
     return NextResponse.json({ error: "Sign in to view this order" }, { status: 401 });
   }
 
-  const { data: order } = await executeWithFallback(
+  let order;
+  try {
+    ({ data: order } = await executeWithFallback(
     async () => {
       await ensureStoreSeeded();
       return prisma.order.findUnique({
@@ -64,7 +66,11 @@ export async function GET(
       return getFallbackOrderById(id) ?? null;
     },
     2500,
-  );
+  ));
+  } catch (error: unknown) {
+    console.error("[Order GET] Error:", error instanceof Error ? error.message : String(error));
+    return NextResponse.json({ error: "Could not load order" }, { status: 500 });
+  }
 
   if (!order || (session.role !== UserRole.ADMIN && order.userId !== session.id)) {
     return NextResponse.json({ error: "Order not found" }, { status: 404 });
@@ -84,7 +90,7 @@ export async function PATCH(
     return NextResponse.json({ error: "Admin access required" }, { status: 403 });
   }
 
-  const parsed = statusSchema.safeParse(await request.json());
+  const parsed = statusSchema.safeParse(await request.json().catch(() => null));
 
   if (!parsed.success) {
     return NextResponse.json(
@@ -119,7 +125,11 @@ export async function PATCH(
     );
 
     return NextResponse.json({ order: serializeOrder(order) });
-  } catch {
-    return NextResponse.json({ error: "Order not found" }, { status: 404 });
+  } catch (error: unknown) {
+    if (prismaErrorCode(error) === "P2025" || (error instanceof Error && error.message === "Order not found")) {
+      return NextResponse.json({ error: "Order not found" }, { status: 404 });
+    }
+    console.error("[Order PATCH] Error:", error instanceof Error ? error.message : String(error));
+    return NextResponse.json({ error: "Failed to update order" }, { status: 500 });
   }
 }

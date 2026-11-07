@@ -7,6 +7,7 @@ import { X, CreditCard, MapPin, CheckCircle2, Lock, ArrowLeft, ArrowRight, Shiel
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import confetti from "canvas-confetti";
+import { useEscapeKey } from "@/hooks/use-escape-key";
 
 export function CheckoutFlow() {
   const {
@@ -41,6 +42,9 @@ export function CheckoutFlow() {
 
   // Placed Order States
   const [createdOrder, setCreatedOrder] = useState<Order | null>(null);
+
+  // Escape closes checkout except while payment is processing.
+  useEscapeKey(isCheckoutOpen && step !== 3, () => handleClose());
 
   if (!isCheckoutOpen) return null;
 
@@ -165,7 +169,12 @@ export function CheckoutFlow() {
   }
 
   return (
-    <div className="fixed inset-0 z-[1000] flex items-center justify-center p-4">
+    <div
+      className="fixed inset-0 z-[1000] flex items-center justify-center p-4"
+      role="dialog"
+      aria-modal="true"
+      aria-label="Checkout"
+    >
       {/* Backdrop */}
       <div className="absolute inset-0 bg-background/60 backdrop-blur-sm" />
 
@@ -180,7 +189,9 @@ export function CheckoutFlow() {
               <p className="text-xs text-muted-txt">Complete your order with end-to-end security encryption.</p>
             </div>
             <button
+              type="button"
               onClick={handleClose}
+              aria-label="Close checkout"
               className="rounded-full p-1.5 text-muted-txt hover:bg-muted-bg hover:text-foreground transition-colors"
             >
               <X className="h-5 w-5" />
@@ -389,6 +400,7 @@ export function CheckoutFlow() {
                         <img
                           src={getProductImage(item.product.name)}
                           alt={item.product.name}
+                          loading="lazy"
                           className="h-full w-full object-cover"
                         />
                       </div>

@@ -7,45 +7,42 @@ import { defaultAdmin, demoProducts } from "@/lib/store-data";
 let seedPromise: Promise<void> | null = null;
 
 async function seedStore() {
-  const adminCount = await prisma.user.count({
-    where: { email: defaultAdmin.email },
-  });
-
-  if (adminCount === 0) {
-    await prisma.user.create({
-      data: {
-        name: defaultAdmin.name,
-        email: defaultAdmin.email,
-        passwordHash: await hashPassword(defaultAdmin.password),
-        role: UserRole.ADMIN,
-      },
+  if (defaultAdmin.password) {
+    const adminCount = await prisma.user.count({
+      where: { email: defaultAdmin.email },
     });
-  }
 
-  for (const item of demoProducts) {
-    const exists = await prisma.product.findFirst({
-      where: { name: item.name },
-    });
-    if (!exists) {
-      await prisma.product.create({
+    if (adminCount === 0) {
+      await prisma.user.create({
         data: {
-          name: item.name,
-          description: item.description,
-          category: item.category,
-          price: item.price,
-          inventory: item.inventory,
-          featured: item.featured,
-          rating: item.rating,
+          name: defaultAdmin.name,
+          email: defaultAdmin.email,
+          passwordHash: await hashPassword(defaultAdmin.password),
+          role: UserRole.ADMIN,
         },
       });
     }
   }
+
+  // Only seed demo products into an empty catalog, so products an admin
+  // deleted or renamed are not recreated on the next cold start.
+  const productCount = await prisma.product.count();
+  if (productCount === 0) {
+    await prisma.product.createMany({
+      data: demoProducts.map((item) => ({ ...item })),
+    });
+  }
 }
 
+/**
+ * Seeds the store once per server process. A successful seed is cached;
+ * a failed seed is retried on the next request.
+ */
 export async function ensureStoreSeeded() {
   if (!seedPromise) {
-    seedPromise = seedStore().finally(() => {
+    seedPromise = seedStore().catch((error: unknown) => {
       seedPromise = null;
+      throw error;
     });
   }
 

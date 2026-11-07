@@ -14,7 +14,7 @@ export async function GET() {
       return NextResponse.json({ user: null });
     }
 
-    const { data: user } = await executeWithFallback(
+    const { data: user, isFallback } = await executeWithFallback(
       async () => {
         await ensureStoreSeeded();
         return prisma.user.findUnique({
@@ -36,6 +36,12 @@ export async function GET() {
       },
       2500,
     );
+
+    // The database is reachable and the account no longer exists: treat the
+    // token as stale instead of trusting it.
+    if (!user && !isFallback) {
+      return NextResponse.json({ user: null });
+    }
 
     return NextResponse.json({ user: user ?? session });
   } catch (error: unknown) {

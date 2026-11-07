@@ -118,7 +118,7 @@ async function testExecuteWithFallback(dbOp, fallbackOp, timeoutMs = 500) {
     const result = await Promise.race([dbOp(), timeoutPromise]);
     if (timer) clearTimeout(timer);
     return { data: result, isFallback: false };
-  } catch (error) {
+  } catch {
     if (timer) clearTimeout(timer);
     const fallbackData = await fallbackOp();
     return { data: fallbackData, isFallback: true };

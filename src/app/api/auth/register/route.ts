@@ -2,7 +2,7 @@ import { UserRole } from "@prisma/client";
 import { NextResponse } from "next/server";
 import { z } from "zod";
 
-import { signSession } from "@/lib/auth";
+import { sessionCookieOptions, signSession } from "@/lib/auth";
 import { executeWithFallback } from "@/lib/db-retry";
 import { createFallbackUser, getFallbackUserByEmail } from "@/lib/fallback-store";
 import { prisma } from "@/lib/prisma";
@@ -10,14 +10,14 @@ import { ensureStoreSeeded } from "@/lib/seed";
 import { hashPassword } from "@/lib/security";
 
 const registerSchema = z.object({
-  name: z.string().min(2).max(60),
+  name: z.string().trim().min(2).max(60),
   email: z.string().email().max(120),
   password: z.string().min(8).max(100),
 });
 
 export async function POST(request: Request) {
   try {
-    const parsed = registerSchema.safeParse(await request.json());
+    const parsed = registerSchema.safeParse(await request.json().catch(() => null));
 
     if (!parsed.success) {
       return NextResponse.json(
@@ -86,15 +86,7 @@ export async function POST(request: Request) {
       },
     );
 
-    response.cookies.set({
-      name: "santhosh_store_session",
-      value: signSession(user),
-      httpOnly: true,
-      sameSite: "lax",
-      secure: process.env.NODE_ENV === "production",
-      path: "/",
-      maxAge: 60 * 60 * 24 * 7,
-    });
+    response.cookies.set({ ...sessionCookieOptions(), value: signSession(user) });
 
     return response;
   } catch (error: unknown) {

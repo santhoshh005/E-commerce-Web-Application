@@ -57,7 +57,7 @@ export function CartDrawer() {
   }
 
   return (
-    <div className="fixed inset-0 z-[1000] overflow-hidden">
+    <div className="fixed inset-0 z-[1000] overflow-hidden" role="dialog" aria-modal="true" aria-label="Shopping cart">
       {/* Backdrop */}
       <div
         className="absolute inset-0 bg-background/60 backdrop-blur-sm transition-opacity"
@@ -81,7 +81,9 @@ export function CartDrawer() {
               </span>
             </div>
             <button
+              type="button"
               onClick={() => setCartOpen(false)}
+              aria-label="Close cart"
               className="rounded-full p-1.5 text-muted-txt hover:bg-muted-bg hover:text-foreground transition-colors"
             >
               <X className="h-5 w-5" />
@@ -143,6 +145,7 @@ export function CartDrawer() {
                       <img
                         src={getProductImage(item.product.name)}
                         alt={item.product.name}
+                        loading="lazy"
                         className="h-full w-full object-cover"
                       />
                     </div>
@@ -160,6 +163,7 @@ export function CartDrawer() {
                         </div>
                         <button
                           onClick={() => removeFromCart(item.productId)}
+                          aria-label={`Remove ${item.product.name}`}
                           className="text-muted-txt hover:text-error-brand transition-colors p-1"
                         >
                           <Trash2 className="h-4 w-4" />
@@ -173,6 +177,7 @@ export function CartDrawer() {
                         <div className="flex items-center rounded-xl border border-border-brand p-0.5 bg-muted-bg/30">
                           <button
                             onClick={() => updateCartItem(item.productId, item.quantity - 1)}
+                            aria-label="Decrease quantity"
                             className="h-6 w-6 flex items-center justify-center rounded-lg hover:bg-card text-muted-txt transition-colors"
                           >
                             <Minus className="h-3 w-3" />
@@ -182,6 +187,7 @@ export function CartDrawer() {
                           </span>
                           <button
                             onClick={() => updateCartItem(item.productId, item.quantity + 1)}
+                            aria-label="Increase quantity"
                             className="h-6 w-6 flex items-center justify-center rounded-lg hover:bg-card text-muted-txt transition-colors"
                           >
                             <Plus className="h-3 w-3" />

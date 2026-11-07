@@ -1,13 +1,12 @@
 import { NextResponse } from "next/server";
 import { z } from "zod";
 
-import { signSession } from "@/lib/auth";
+import { sessionCookieOptions, signSession } from "@/lib/auth";
 import { executeWithFallback } from "@/lib/db-retry";
 import { getFallbackUserByEmail } from "@/lib/fallback-store";
 import { prisma } from "@/lib/prisma";
 import { ensureStoreSeeded } from "@/lib/seed";
-import { comparePassword } from "@/lib/security";
-import { defaultAdmin } from "@/lib/store-data";
+import { comparePassword, getDummyPasswordHash } from "@/lib/security";
 
 const loginSchema = z.object({
   email: z.string().email().max(120),
@@ -16,7 +15,7 @@ const loginSchema = z.object({
 
 export async function POST(request: Request) {
   try {
-    const parsed = loginSchema.safeParse(await request.json());
+    const parsed = loginSchema.safeParse(await request.json().catch(() => null));
 
     if (!parsed.success) {
       return NextResponse.json(
@@ -55,31 +54,22 @@ export async function POST(request: Request) {
       2500,
     );
 
-    // Check credentials (including direct demo admin fallback)
-    const isAdminDirect =
-      email === defaultAdmin.email.toLowerCase() &&
-      parsed.data.password === defaultAdmin.password;
+    // Always run a bcrypt comparison so response time does not reveal
+    // whether the email exists.
+    const isPasswordValid = await comparePassword(
+      parsed.data.password,
+      user?.passwordHash ?? getDummyPasswordHash(),
+    );
 
-    let isPasswordValid = false;
-    if (isAdminDirect) {
-      isPasswordValid = true;
-    } else if (user) {
-      isPasswordValid = await comparePassword(parsed.data.password, user.passwordHash);
-    }
-
-    if (!user && !isAdminDirect) {
-      return NextResponse.json({ error: "Invalid email or password" }, { status: 401 });
-    }
-
-    if (!isPasswordValid) {
+    if (!user || !isPasswordValid) {
       return NextResponse.json({ error: "Invalid email or password" }, { status: 401 });
     }
 
     const sessionUser = {
-      id: user?.id ?? "user-admin-fallback",
-      name: user?.name ?? defaultAdmin.name,
-      email: user?.email ?? defaultAdmin.email.toLowerCase(),
-      role: user?.role ?? ("ADMIN" as const),
+      id: user.id,
+      name: user.name,
+      email: user.email,
+      role: user.role,
     };
 
     const response = NextResponse.json(
@@ -91,15 +81,7 @@ export async function POST(request: Request) {
       },
     );
 
-    response.cookies.set({
-      name: "santhosh_store_session",
-      value: signSession(sessionUser),
-      httpOnly: true,
-      sameSite: "lax",
-      secure: process.env.NODE_ENV === "production",
-      path: "/",
-      maxAge: 60 * 60 * 24 * 7,
-    });
+    response.cookies.set({ ...sessionCookieOptions(), value: signSession(sessionUser) });
 
     return response;
   } catch (error: unknown) {

@@ -146,6 +146,24 @@ async function fetchJson<T>(url: string, init?: RequestInit): Promise<T> {
 
 let toastIdCounter = 0;
 
+function parseSavedCart(raw: string | null): CartItem[] {
+  if (!raw) return [];
+  try {
+    const parsed: unknown = JSON.parse(raw);
+    if (!Array.isArray(parsed)) return [];
+    return parsed.filter(
+      (item): item is CartItem =>
+        typeof item === "object" &&
+        item !== null &&
+        typeof (item as CartItem).productId === "string" &&
+        Number.isInteger((item as CartItem).quantity) &&
+        (item as CartItem).quantity > 0,
+    );
+  } catch {
+    return [];
+  }
+}
+
 export function StoreProvider({ children }: { children: React.ReactNode }) {
   const [session, setSession] = useState<SessionUser | null>(null);
   const [products, setProducts] = useState<Product[]>([]);
@@ -159,33 +177,17 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
   const [authMode, setAuthMode] = useState<"login" | "register">("login");
   const [selectedProduct, setSelectedProduct] = useState<Product | null>(null);
   
-  // Theme state
-  const [theme, setTheme] = useState<"light" | "dark">(() => {
-    if (typeof window === "undefined") return "light";
-    const savedTheme = window.localStorage.getItem("santhosh-theme") as "light" | "dark" | null;
-    if (savedTheme) return savedTheme;
-    const prefersDark = window.matchMedia("(prefers-color-scheme: dark)").matches;
-    return prefersDark ? "dark" : "light";
-  });
-  
+  // Theme state (read from localStorage after mount to avoid hydration mismatches)
+  const [theme, setTheme] = useState<"light" | "dark">("light");
+
   // Search and Category filters
   const [searchQuery, setSearchQuery] = useState("");
   const [selectedCategory, setSelectedCategory] = useState("All");
   const [activeView, setActiveView] = useState<"store" | "dashboard" | "admin">("store");
   
-  // Cart state
-  const [cart, setCart] = useState<CartItem[]>(() => {
-    if (typeof window === "undefined") return [];
-    const savedCart = window.localStorage.getItem("santhosh-cart");
-    if (savedCart) {
-      try {
-        return JSON.parse(savedCart) as CartItem[];
-      } catch {
-        return [];
-      }
-    }
-    return [];
-  });
+  // Cart state (restored from localStorage after mount)
+  const [cart, setCart] = useState<CartItem[]>([]);
+  const [hasRestored, setHasRestored] = useState(false);
   const [loading, setLoading] = useState(true);
 
   // Sync theme with DOM document element
@@ -197,10 +199,32 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
     }
   }, [theme]);
 
-  // Save cart to local storage
+  // Restore theme and cart from local storage once on mount
   useEffect(() => {
-    window.localStorage.setItem("santhosh-cart", JSON.stringify(cart));
-  }, [cart]);
+    try {
+      const savedTheme = window.localStorage.getItem("santhosh-theme");
+      const prefersDark = window.matchMedia("(prefers-color-scheme: dark)").matches;
+      const restoredTheme =
+        savedTheme === "light" || savedTheme === "dark" ? savedTheme : prefersDark ? "dark" : "light";
+      const restoredCart = parseSavedCart(window.localStorage.getItem("santhosh-cart"));
+      // eslint-disable-next-line react-hooks/set-state-in-effect -- one-time sync from browser storage
+      setTheme(restoredTheme);
+      setCart(restoredCart);
+    } catch {
+      // Storage unavailable (private mode, blocked cookies): keep defaults.
+    }
+    setHasRestored(true);
+  }, []);
+
+  // Save cart to local storage (only after restoring, so the saved cart is not overwritten)
+  useEffect(() => {
+    if (!hasRestored) return;
+    try {
+      window.localStorage.setItem("santhosh-cart", JSON.stringify(cart));
+    } catch {
+      // Ignore storage quota / availability errors.
+    }
+  }, [cart, hasRestored]);
 
   // Hoist refresh utilities so they are defined when called inside effects
   const refreshOrders = async () => {
@@ -235,13 +259,8 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
         }
 
         if (authResult.status === "fulfilled") {
-          const user = authResult.value.user;
-          setSession(user);
-
-          if (user) {
-            const { orders: fetchedOrders } = await fetchJson<{ orders: Order[] }>("/api/orders");
-            setOrders(fetchedOrders);
-          }
+          // Orders are loaded by the session effect below.
+          setSession(authResult.value.user);
         }
       } catch (error) {
         console.error("Store initialization error:", error);
@@ -284,7 +303,11 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
   const toggleTheme = () => {
     const newTheme = theme === "light" ? "dark" : "light";
     setTheme(newTheme);
-    window.localStorage.setItem("santhosh-theme", newTheme);
+    try {
+      window.localStorage.setItem("santhosh-theme", newTheme);
+    } catch {
+      // Ignore storage errors.
+    }
   };
 
   // Cart operations

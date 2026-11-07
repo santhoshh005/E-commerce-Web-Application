@@ -1,7 +1,16 @@
+/**
+ * Seed admin account. Credentials come from ADMIN_EMAIL / ADMIN_PASSWORD.
+ * The demo password is only used outside production; in production the
+ * admin account is not seeded unless ADMIN_PASSWORD is set.
+ */
+const DEMO_ADMIN_PASSWORD = "Admin123!";
+
 export const defaultAdmin = {
   name: "Store Admin",
-  email: "admin@santhosh.store",
-  password: "Admin123!",
+  email: (process.env.ADMIN_EMAIL || "admin@santhosh.store").toLowerCase(),
+  password:
+    process.env.ADMIN_PASSWORD ||
+    (process.env.NODE_ENV === "production" ? null : DEMO_ADMIN_PASSWORD),
 };
 
 export const demoProducts = [

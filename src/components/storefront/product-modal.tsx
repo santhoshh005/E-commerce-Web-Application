@@ -6,10 +6,14 @@ import { formatMoney, getProductImage } from "@/lib/utils";
 import { X, Star, ShoppingBag, Plus, Minus, ShieldCheck, Truck } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { useEscapeKey } from "@/hooks/use-escape-key";
 
 export function ProductModal() {
   const { selectedProduct, setSelectedProduct, addToCart, cart, updateCartItem, addToast } = useStore();
   const [quantity, setQuantity] = useState(1);
+
+  const closeModal = React.useCallback(() => setSelectedProduct(null), [setSelectedProduct]);
+  useEscapeKey(Boolean(selectedProduct), closeModal);
 
   if (!selectedProduct) return null;
 
@@ -86,11 +90,17 @@ export function ProductModal() {
   };
 
   return (
-    <div className="fixed inset-0 z-[1000] flex items-center justify-center p-4">
+    <div
+      className="fixed inset-0 z-[1000] flex items-center justify-center p-4"
+      role="dialog"
+      aria-modal="true"
+      aria-label={selectedProduct.name}
+    >
       {/* Backdrop */}
       <div
         className="absolute inset-0 bg-background/60 backdrop-blur-sm"
         onClick={() => setSelectedProduct(null)}
+        aria-hidden="true"
       />
 
       {/* Modal Container */}
@@ -98,7 +108,9 @@ export function ProductModal() {
         
         {/* Close Button */}
         <button
+          type="button"
           onClick={() => setSelectedProduct(null)}
+          aria-label="Close"
           className="absolute right-5 top-5 rounded-full p-2 text-muted-txt hover:bg-muted-bg hover:text-foreground transition-colors z-10"
         >
           <X className="h-5 w-5" />

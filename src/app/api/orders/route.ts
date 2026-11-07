@@ -17,7 +17,7 @@ const orderItemSchema = z.object({
 });
 
 const checkoutSchema = z.object({
-  items: z.array(orderItemSchema).min(1),
+  items: z.array(orderItemSchema).min(1).max(50),
 });
 
 function serializeOrder(order: {
@@ -96,7 +96,7 @@ export async function GET() {
   } catch (error: unknown) {
     const message = error instanceof Error ? error.message : String(error);
     console.error("[Orders GET] Error:", message);
-    return NextResponse.json({ orders: [] });
+    return NextResponse.json({ error: "Could not load orders" }, { status: 500 });
   }
 }
 
@@ -108,7 +108,7 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: "Sign in to place an order" }, { status: 401 });
     }
 
-    const parsed = checkoutSchema.safeParse(await request.json());
+    const parsed = checkoutSchema.safeParse(await request.json().catch(() => null));
 
     if (!parsed.success) {
       return NextResponse.json(
@@ -189,14 +189,16 @@ export async function POST(request: Request) {
             },
           });
 
-          await Promise.all(
-            Object.entries(quantitiesByProductId).map(([productId, quantity]) =>
-              transaction.product.update({
-                where: { id: productId },
-                data: { inventory: { decrement: quantity } },
-              }),
-            ),
-          );
+          // Conditional decrement guards against concurrent orders overselling stock.
+          for (const [productId, quantity] of Object.entries(quantitiesByProductId)) {
+            const { count } = await transaction.product.updateMany({
+              where: { id: productId, inventory: { gte: quantity } },
+              data: { inventory: { decrement: quantity } },
+            });
+            if (count === 0) {
+              throw new Error(`Insufficient inventory for ${productMap.get(productId)?.name ?? productId}`);
+            }
+          }
 
           return createdOrder;
         });
@@ -204,7 +206,10 @@ export async function POST(request: Request) {
       () => {
         return createFallbackOrder({
           userId: session.id,
-          items: parsed.data.items,
+          items: Object.entries(quantitiesByProductId).map(([productId, quantity]) => ({
+            productId,
+            quantity,
+          })),
           user: session,
         });
       },
@@ -222,10 +227,11 @@ export async function POST(request: Request) {
     );
   } catch (error: unknown) {
     const message = error instanceof Error ? error.message : String(error);
+    const isBusinessError = message.includes("inventory") || message.includes("unavailable");
     console.error("[Orders POST] Error:", message);
     return NextResponse.json(
-      { error: message.includes("inventory") || message.includes("unavailable") ? message : "Order creation failed" },
-      { status: 400 },
+      { error: isBusinessError ? message : "Order creation failed. Please try again." },
+      { status: isBusinessError ? 409 : 500 },
     );
   }
 }

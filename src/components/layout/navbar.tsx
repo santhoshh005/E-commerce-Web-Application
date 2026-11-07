@@ -112,6 +112,7 @@ export function Navbar() {
               setActiveView("store");
               addToast("Use the search bar to filter products", "info");
             }}
+            aria-label="Search products"
             className="p-2 md:hidden text-muted-txt hover:text-foreground hover:bg-muted-bg rounded-xl transition-colors"
           >
             <Search className="h-5 w-5" />
@@ -135,6 +136,7 @@ export function Navbar() {
           {/* Cart Icon Trigger */}
           <button
             onClick={() => setCartOpen(true)}
+            aria-label={`Open cart (${cartItemsCount} items)`}
             className={`relative p-2.5 text-muted-txt hover:text-foreground hover:bg-muted-bg rounded-2xl transition-all active:scale-95 ${
               animateCart ? "animate-bounce" : ""
             }`}
@@ -152,6 +154,8 @@ export function Navbar() {
             <div className="relative">
               <button
                 onClick={() => setDropdownOpen(!isDropdownOpen)}
+                aria-label="Account menu"
+                aria-expanded={isDropdownOpen}
                 className="flex items-center gap-2 rounded-2xl border border-border-brand bg-muted-bg/30 px-3 py-1.5 text-sm font-semibold hover:bg-muted-bg hover:border-muted-txt transition-all"
               >
                 <div className="flex h-6 w-6 items-center justify-center rounded-full bg-primary-brand text-xs font-bold text-primary-brand-foreground">

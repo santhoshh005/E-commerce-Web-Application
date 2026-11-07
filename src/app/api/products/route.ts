@@ -9,12 +9,12 @@ import { prisma } from "@/lib/prisma";
 import { ensureStoreSeeded } from "@/lib/seed";
 
 const productSchema = z.object({
-  name: z.string().min(2).max(120),
+  name: z.string().trim().min(2).max(120),
   description: z.string().min(12).max(500),
   category: z.string().min(2).max(60),
-  price: z.coerce.number().int().min(100),
-  inventory: z.coerce.number().int().min(0),
-  featured: z.coerce.boolean().optional().default(false),
+  price: z.coerce.number().int().min(100).max(100_000_000),
+  inventory: z.coerce.number().int().min(0).max(1_000_000),
+  featured: z.boolean().optional().default(false),
   rating: z.coerce.number().min(0).max(5).optional().default(4.5),
 });
 
@@ -54,7 +54,7 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: "Admin access required" }, { status: 403 });
     }
 
-    const parsed = productSchema.safeParse(await request.json());
+    const parsed = productSchema.safeParse(await request.json().catch(() => null));
 
     if (!parsed.success) {
       return NextResponse.json(

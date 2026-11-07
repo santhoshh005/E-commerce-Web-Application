@@ -52,3 +52,7 @@ public/report_images/
 
 # agent skills
 /.agents
+
+# keep the env template tracked
+!.env.example
+skills-lock.json

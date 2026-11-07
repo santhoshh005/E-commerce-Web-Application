@@ -3,7 +3,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 
 import { getSessionUser } from "@/lib/auth";
-import { executeWithFallback } from "@/lib/db-retry";
+import { executeWithFallback, prismaErrorCode } from "@/lib/db-retry";
 import {
   deleteFallbackProduct,
   updateFallbackProduct,
@@ -13,12 +13,12 @@ import { ensureStoreSeeded } from "@/lib/seed";
 
 const productUpdateSchema = z
   .object({
-    name: z.string().min(2).max(120).optional(),
+    name: z.string().trim().min(2).max(120).optional(),
     description: z.string().min(12).max(500).optional(),
     category: z.string().min(2).max(60).optional(),
-    price: z.coerce.number().int().min(100).optional(),
-    inventory: z.coerce.number().int().min(0).optional(),
-    featured: z.coerce.boolean().optional(),
+    price: z.coerce.number().int().min(100).max(100_000_000).optional(),
+    inventory: z.coerce.number().int().min(0).max(1_000_000).optional(),
+    featured: z.boolean().optional(),
     rating: z.coerce.number().min(0).max(5).optional(),
   })
   .refine((value) => Object.keys(value).length > 0, {
@@ -36,7 +36,7 @@ export async function PATCH(
     return NextResponse.json({ error: "Admin access required" }, { status: 403 });
   }
 
-  const parsed = productUpdateSchema.safeParse(await request.json());
+  const parsed = productUpdateSchema.safeParse(await request.json().catch(() => null));
 
   if (!parsed.success) {
     return NextResponse.json(
@@ -65,8 +65,12 @@ export async function PATCH(
     );
 
     return NextResponse.json({ product });
-  } catch {
-    return NextResponse.json({ error: "Product not found" }, { status: 404 });
+  } catch (error: unknown) {
+    if (prismaErrorCode(error) === "P2025" || (error instanceof Error && error.message === "Product not found")) {
+      return NextResponse.json({ error: "Product not found" }, { status: 404 });
+    }
+    console.error("[Products PATCH] Error:", error instanceof Error ? error.message : String(error));
+    return NextResponse.json({ error: "Failed to update product" }, { status: 500 });
   }
 }
 
@@ -99,10 +103,18 @@ export async function DELETE(
     );
 
     return NextResponse.json({ success: true });
-  } catch {
-    return NextResponse.json(
-      { error: "Cannot delete product because it is referenced in past order histories." },
-      { status: 400 },
-    );
+  } catch (error: unknown) {
+    const code = prismaErrorCode(error);
+    if (code === "P2003") {
+      return NextResponse.json(
+        { error: "Cannot delete product because it is referenced in past order histories." },
+        { status: 409 },
+      );
+    }
+    if (code === "P2025" || (error instanceof Error && error.message === "Product not found")) {
+      return NextResponse.json({ error: "Product not found" }, { status: 404 });
+    }
+    console.error("[Products DELETE] Error:", error instanceof Error ? error.message : String(error));
+    return NextResponse.json({ error: "Failed to delete product" }, { status: 500 });
   }
 }

@@ -1,74 +1,82 @@
 /**
- * Retry and Fallback wrappers for database operations.
- * Handles transient connection failures and provides an instant in-memory
- * fallback when Supabase PostgreSQL is paused (free-tier 7-day auto-pause)
- * or when the 2-project quota limit is reached.
+ * Fallback wrapper for database operations.
+ * Provides an in-memory fallback when Supabase PostgreSQL is paused
+ * (free-tier auto-pause) or otherwise unreachable.
+ *
+ * Only connectivity failures trigger the fallback. Business errors
+ * (duplicate email, insufficient inventory, record not found, foreign-key
+ * violations) are re-thrown so callers can return the correct response
+ * instead of silently writing to the in-memory store.
  */
 
-export async function withDbRetry<T>(
-  operation: () => Promise<T>,
-  maxRetries = 2,
-  baseDelay = 1000,
-): Promise<T> {
-  for (let attempt = 1; attempt <= maxRetries; attempt++) {
-    try {
-      return await operation();
-    } catch (error: unknown) {
-      const message = error instanceof Error ? error.message : String(error);
-      const isTransient =
-        message.includes("Can't reach database") ||
-        message.includes("connection") ||
-        message.includes("ECONNREFUSED") ||
-        message.includes("ENOTFOUND") ||
-        message.includes("not available") ||
-        message.includes("EAUTHQUERY") ||
-        message.includes("P1001") ||
-        message.includes("P1002") ||
-        message.includes("timed out") ||
-        message.includes("terminating connection");
+const CONNECTIVITY_MARKERS = [
+  "Can't reach database",
+  "ECONNREFUSED",
+  "ECONNRESET",
+  "ENOTFOUND",
+  "ETIMEDOUT",
+  "EAUTHQUERY",
+  "P1001",
+  "P1002",
+  "P1017",
+  "timed out",
+  "terminating connection",
+  "Connection terminated",
+  "connection timeout",
+  "Tenant or user not found",
+  "not available",
+];
 
-      if (isTransient && attempt < maxRetries) {
-        console.warn(
-          `[DB Retry] Attempt ${attempt}/${maxRetries} failed (${message}). Retrying in ${baseDelay * attempt}ms...`,
-        );
-        await new Promise((r) => setTimeout(r, baseDelay * attempt));
-        continue;
-      }
+class DatabaseTimeoutError extends Error {}
 
-      throw error;
-    }
-  }
+export function isConnectivityError(error: unknown): boolean {
+  if (error instanceof DatabaseTimeoutError) return true;
+  if (error instanceof Error && error.name === "PrismaClientInitializationError") return true;
 
-  throw new Error("Unexpected: retry loop exited without returning or throwing");
+  const message = error instanceof Error ? error.message : String(error);
+  return CONNECTIVITY_MARKERS.some((marker) => message.includes(marker));
 }
 
 /**
- * Executes a database operation with a fast timeout guard (default: 2500ms).
+ * Executes a database operation with a timeout guard (default: 2500ms).
  * If PostgreSQL is healthy, it returns the real database result.
- * If PostgreSQL is paused, asleep, or unreachable, it immediately falls back
- * to the provided in-memory operation with zero customer-facing downtime.
+ * If PostgreSQL is paused or unreachable, it falls back to the provided
+ * in-memory operation. Any other error is re-thrown unchanged.
  */
 export async function executeWithFallback<T>(
   dbOperation: () => Promise<T>,
   fallbackOperation: () => Promise<T> | T,
   timeoutMs = 2500,
 ): Promise<{ data: T; isFallback: boolean }> {
-  let timer: NodeJS.Timeout | null = null;
+  let timer: ReturnType<typeof setTimeout> | undefined;
   const timeoutPromise = new Promise<never>((_, reject) => {
     timer = setTimeout(() => {
-      reject(new Error(`Database connection timed out after ${timeoutMs}ms (Supabase may be paused/sleeping)`));
+      reject(new DatabaseTimeoutError(`Database connection timed out after ${timeoutMs}ms`));
     }, timeoutMs);
   });
 
   try {
     const result = await Promise.race([dbOperation(), timeoutPromise]);
-    if (timer) clearTimeout(timer);
     return { data: result, isFallback: false };
   } catch (error: unknown) {
-    if (timer) clearTimeout(timer);
+    if (!isConnectivityError(error)) {
+      throw error;
+    }
+
     const message = error instanceof Error ? error.message : String(error);
-    console.warn(`[Resilient Fallback] Supabase PostgreSQL unavailable (${message}). Serving in-memory fallback.`);
+    console.warn(`[Resilient Fallback] Database unavailable (${message}). Serving in-memory fallback.`);
     const fallbackData = await fallbackOperation();
     return { data: fallbackData, isFallback: true };
+  } finally {
+    clearTimeout(timer);
   }
+}
+
+/** Returns the Prisma error code (e.g. "P2025") when present. */
+export function prismaErrorCode(error: unknown): string | undefined {
+  if (typeof error === "object" && error !== null && "code" in error) {
+    const code = (error as { code: unknown }).code;
+    return typeof code === "string" ? code : undefined;
+  }
+  return undefined;
 }

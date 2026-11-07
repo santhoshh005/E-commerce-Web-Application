@@ -1,19 +1,23 @@
 "use client";
 
 import React, { useState } from "react";
-import { useStore } from "@/context/store-context";
+import { useStore, type SessionUser } from "@/context/store-context";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { X, Lock, Mail, User, Eye, EyeOff } from "lucide-react";
+import { useEscapeKey } from "@/hooks/use-escape-key";
 
 export function AuthModal() {
   const { isAuthOpen, setAuthOpen, authMode, setAuthMode, setSession, refreshOrders, addToast } = useStore();
+  const closeAuth = React.useCallback(() => setAuthOpen(false), [setAuthOpen]);
   const [name, setName] = useState("");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [showPassword, setShowPassword] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState("");
+
+  useEscapeKey(isAuthOpen, closeAuth);
 
   if (!isAuthOpen) return null;
 
@@ -46,7 +50,7 @@ export function AuthModal() {
         body: JSON.stringify(payload),
       });
 
-      let data: any = {};
+      let data: { error?: string; user?: SessionUser } = {};
       const contentType = response.headers.get("content-type");
       if (contentType && contentType.includes("application/json")) {
         data = await response.json();
@@ -55,7 +59,7 @@ export function AuthModal() {
         throw new Error(`Server returned status ${response.status}: ${text.slice(0, 150) || "No response details"}`);
       }
 
-      if (!response.ok) {
+      if (!response.ok || !data.user) {
         throw new Error(data.error ?? "Authentication failed");
       }
 
@@ -82,7 +86,12 @@ export function AuthModal() {
   }
 
   return (
-    <div className="fixed inset-0 z-[1000] flex items-center justify-center p-4">
+    <div
+      className="fixed inset-0 z-[1000] flex items-center justify-center p-4"
+      role="dialog"
+      aria-modal="true"
+      aria-label={authMode === "login" ? "Sign in" : "Create account"}
+    >
       {/* Backdrop */}
       <div
         className="absolute inset-0 bg-background/60 backdrop-blur-sm"
@@ -92,7 +101,9 @@ export function AuthModal() {
       {/* Modal Content */}
       <div className="relative w-full max-w-md overflow-hidden rounded-[2rem] border border-card-border bg-card p-6 shadow-2xl animate-scale-up z-10 md:p-8">
         <button
+          type="button"
           onClick={() => setAuthOpen(false)}
+          aria-label="Close"
           className="absolute right-5 top-5 rounded-full p-1.5 text-muted-txt hover:bg-muted-bg hover:text-foreground transition-colors"
         >
           <X className="h-5 w-5" />

@@ -225,6 +225,7 @@ export function UserDashboard() {
                                 <img
                                   src={getProductImage(item.product.name)}
                                   alt={item.product.name}
+                                  loading="lazy"
                                   className="h-full w-full object-cover"
                                 />
                               </div>
