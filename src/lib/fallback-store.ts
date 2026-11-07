@@ -280,6 +280,14 @@ export function createFallbackUser(data: {
   return newUser;
 }
 
+export function updateFallbackUserPassword(id: string, passwordHash: string): boolean {
+  const user = getFallbackUsers().find((u) => u.id === id);
+  if (!user) return false;
+  user.passwordHash = passwordHash;
+  user.updatedAt = new Date();
+  return true;
+}
+
 export function getFallbackOrders(userId?: string, isAdmin?: boolean): FallbackOrder[] {
   if (!globalForFallback.fallbackOrders) {
     const products = getFallbackProducts();
@@ -382,6 +390,23 @@ export function updateFallbackOrderStatus(id: string, status: OrderStatus): Fall
   const orders = getFallbackOrders(undefined, true);
   const index = orders.findIndex((o) => o.id === id);
   if (index === -1) return null;
+
+  const current = orders[index]!;
+  if (current.status === OrderStatus.CANCELLED && status !== OrderStatus.CANCELLED) {
+    throw new Error("Cancelled orders cannot be reopened");
+  }
+
+  // Cancelling returns the reserved stock to inventory.
+  if (status === OrderStatus.CANCELLED && current.status !== OrderStatus.CANCELLED) {
+    const products = globalForFallback.fallbackProducts ?? [];
+    for (const item of current.items) {
+      const product = products.find((p) => p.id === item.productId);
+      if (product) {
+        product.inventory += item.quantity;
+        product.updatedAt = new Date();
+      }
+    }
+  }
 
   const updated: FallbackOrder = {
     ...orders[index]!,

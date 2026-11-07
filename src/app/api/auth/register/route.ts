@@ -3,9 +3,10 @@ import { NextResponse } from "next/server";
 import { z } from "zod";
 
 import { sessionCookieOptions, signSession } from "@/lib/auth";
-import { executeWithFallback } from "@/lib/db-retry";
+import { executeWithFallback, unavailableResponse, writeFallback } from "@/lib/db-retry";
 import { createFallbackUser, getFallbackUserByEmail } from "@/lib/fallback-store";
 import { prisma } from "@/lib/prisma";
+import { getClientIp, rateLimitResponse } from "@/lib/rate-limit";
 import { ensureStoreSeeded } from "@/lib/seed";
 import { hashPassword } from "@/lib/security";
 
@@ -17,6 +18,10 @@ const registerSchema = z.object({
 
 export async function POST(request: Request) {
   try {
+    // 10 sign-ups per IP per hour
+    const limited = rateLimitResponse(`register:ip:${getClientIp(request)}`, 10, 60 * 60 * 1000);
+    if (limited) return limited;
+
     const parsed = registerSchema.safeParse(await request.json().catch(() => null));
 
     if (!parsed.success) {
@@ -53,7 +58,7 @@ export async function POST(request: Request) {
           },
         });
       },
-      () => {
+      writeFallback(() => {
         const existingFallback = getFallbackUserByEmail(email);
         if (existingFallback) {
           throw new Error("EXISTS");
@@ -72,7 +77,7 @@ export async function POST(request: Request) {
           email: created.email,
           role: created.role,
         };
-      },
+      }),
       2500,
     );
 
@@ -90,6 +95,8 @@ export async function POST(request: Request) {
 
     return response;
   } catch (error: unknown) {
+    const unavailable = unavailableResponse(error);
+    if (unavailable) return unavailable;
     const message = error instanceof Error ? error.message : String(error);
     if (message === "EXISTS") {
       return NextResponse.json(

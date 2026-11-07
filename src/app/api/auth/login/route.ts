@@ -5,6 +5,7 @@ import { sessionCookieOptions, signSession } from "@/lib/auth";
 import { executeWithFallback } from "@/lib/db-retry";
 import { getFallbackUserByEmail } from "@/lib/fallback-store";
 import { prisma } from "@/lib/prisma";
+import { getClientIp, rateLimitResponse } from "@/lib/rate-limit";
 import { ensureStoreSeeded } from "@/lib/seed";
 import { comparePassword, getDummyPasswordHash } from "@/lib/security";
 
@@ -15,6 +16,10 @@ const loginSchema = z.object({
 
 export async function POST(request: Request) {
   try {
+    // 20 attempts per IP per 15 minutes
+    const ipLimited = rateLimitResponse(`login:ip:${getClientIp(request)}`, 20, 15 * 60 * 1000);
+    if (ipLimited) return ipLimited;
+
     const parsed = loginSchema.safeParse(await request.json().catch(() => null));
 
     if (!parsed.success) {
@@ -25,6 +30,10 @@ export async function POST(request: Request) {
     }
 
     const email = parsed.data.email.toLowerCase();
+
+    // 8 attempts per account per 15 minutes
+    const accountLimited = rateLimitResponse(`login:email:${email}`, 8, 15 * 60 * 1000);
+    if (accountLimited) return accountLimited;
 
     const { data: user, isFallback } = await executeWithFallback(
       async () => {

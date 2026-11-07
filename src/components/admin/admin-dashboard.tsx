@@ -210,7 +210,8 @@ export function AdminDashboard() {
       }
 
       addToast(`Order #${orderId.slice(0, 8).toUpperCase()} updated to ${newStatus}.`, "success");
-      await refreshOrders();
+      // Cancelling restocks inventory, so refresh the catalog too.
+      await Promise.all([refreshOrders(), refreshProducts()]);
     } catch (error) {
       addToast(error instanceof Error ? error.message : "Fulfillment update failed", "error");
     }
@@ -533,7 +534,10 @@ export function AdminDashboard() {
                         <select
                           value={ord.status}
                           onChange={(e) => handleUpdateOrderStatus(ord.id, e.target.value)}
-                          className="rounded-xl border border-border-brand bg-card px-2.5 py-1.5 text-xs font-semibold outline-none focus:border-primary-brand cursor-pointer"
+                          disabled={ord.status === "CANCELLED"}
+                          aria-label={`Status for order ${ord.id.slice(0, 8).toUpperCase()}`}
+                          title={ord.status === "CANCELLED" ? "Cancelled orders cannot be reopened" : undefined}
+                          className="rounded-xl border border-border-brand bg-card px-2.5 py-1.5 text-xs font-semibold outline-none focus:border-primary-brand cursor-pointer disabled:cursor-not-allowed disabled:opacity-60"
                         >
                           <option value="PENDING">PENDING</option>
                           <option value="PAID">PAID</option>

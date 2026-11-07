@@ -12,7 +12,10 @@ A full-stack e-commerce store built with Next.js (App Router), Prisma, PostgreSQ
 - Order history and status tracking for customers
 - Admin dashboard: create, edit, feature and delete products; update order status
 - Server-side price, shipping and stock checks, with conditional stock decrements that prevent overselling
-- Resilience: if the database is paused or unreachable, the API serves an in-memory fallback instead of failing
+- Change password from the account dashboard
+- Cancelling an order returns its stock to inventory (cancellation is final)
+- Rate limiting on login, sign-up and password changes
+- Resilience: if the database is paused or unreachable, reads are served from an in-memory fallback
 
 ## Tech stack
 
@@ -42,8 +45,10 @@ A full-stack e-commerce store built with Next.js (App Router), Prisma, PostgreSQ
 4. Create the tables:
 
    ```bash
-   npx prisma db push
+   npx prisma migrate deploy
    ```
+
+   For a database that already has the tables (created earlier with `db push`), mark the baseline as applied instead: `npx prisma migrate resolve --applied 0_init`.
 
 5. Run the app:
 
@@ -61,6 +66,7 @@ A full-stack e-commerce store built with Next.js (App Router), Prisma, PostgreSQ
 | `JWT_SECRET` | yes | Secret for signing session tokens. Use a long random value in production. |
 | `ADMIN_EMAIL` | no | Seed admin email (default `admin@santhosh.store`). |
 | `ADMIN_PASSWORD` | production | Seed admin password. Locally it falls back to a demo password; in production no admin is seeded unless this is set. |
+| `ALLOW_FALLBACK_WRITES` | no | `true` lets sign-ups, orders and admin edits go to the in-memory store while the database is down. Off by default in production, where those requests return 503 instead. |
 
 Never commit `.env` files. Only `.env.example` is tracked.
 
@@ -91,5 +97,6 @@ scripts/                  Test scripts
 ## Deployment notes
 
 - Set `DATABASE_URL`, `JWT_SECRET` and `ADMIN_PASSWORD` in your hosting provider (for example Vercel).
+- If an admin account was created with the old demo password, sign in and change it from the account dashboard.
 - Checkout simulates the payment step. Orders are marked `PAID` without charging a card, so connect a payment provider before taking real orders.
-- Data written while the in-memory fallback is active (sign-ups and orders made during a database outage) is not saved to PostgreSQL and is lost when the server restarts.
+- Rate limits are kept per server instance. On serverless hosts they slow down brute force but are not a global guarantee; use a shared store such as Redis for strict limits.

@@ -3,7 +3,7 @@ import { NextResponse } from "next/server";
 import { z } from "zod";
 
 import { getSessionUser } from "@/lib/auth";
-import { executeWithFallback } from "@/lib/db-retry";
+import { executeWithFallback, unavailableResponse, writeFallback } from "@/lib/db-retry";
 import {
   createFallbackOrder,
   getFallbackOrders,
@@ -203,7 +203,7 @@ export async function POST(request: Request) {
           return createdOrder;
         });
       },
-      () => {
+      writeFallback(() => {
         return createFallbackOrder({
           userId: session.id,
           items: Object.entries(quantitiesByProductId).map(([productId, quantity]) => ({
@@ -212,7 +212,7 @@ export async function POST(request: Request) {
           })),
           user: session,
         });
-      },
+      }),
       2500,
     );
 
@@ -226,6 +226,8 @@ export async function POST(request: Request) {
       },
     );
   } catch (error: unknown) {
+    const unavailable = unavailableResponse(error);
+    if (unavailable) return unavailable;
     const message = error instanceof Error ? error.message : String(error);
     const isBusinessError = message.includes("inventory") || message.includes("unavailable");
     console.error("[Orders POST] Error:", message);

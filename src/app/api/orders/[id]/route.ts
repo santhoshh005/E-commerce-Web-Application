@@ -3,13 +3,15 @@ import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 
 import { getSessionUser } from "@/lib/auth";
-import { executeWithFallback, prismaErrorCode } from "@/lib/db-retry";
+import { executeWithFallback, prismaErrorCode, unavailableResponse, writeFallback } from "@/lib/db-retry";
 import {
   getFallbackOrderById,
   updateFallbackOrderStatus,
 } from "@/lib/fallback-store";
 import { prisma } from "@/lib/prisma";
 import { ensureStoreSeeded } from "@/lib/seed";
+
+const CANCELLED_IS_FINAL = "Cancelled orders cannot be reopened";
 
 const statusSchema = z.object({
   status: z.enum(OrderStatus),
@@ -103,31 +105,57 @@ export async function PATCH(
     const { data: order } = await executeWithFallback(
       async () => {
         await ensureStoreSeeded();
-        return prisma.order.update({
-          where: { id },
-          data: { status: parsed.data.status },
-          include: {
-            user: { select: { id: true, name: true, email: true, role: true } },
-            items: {
-              include: {
-                product: { select: { id: true, name: true, category: true, price: true } },
+        return prisma.$transaction(async (transaction) => {
+          const existing = await transaction.order.findUnique({
+            where: { id },
+            select: { status: true, items: { select: { productId: true, quantity: true } } },
+          });
+          if (!existing) throw new Error("Order not found");
+          if (existing.status === OrderStatus.CANCELLED && parsed.data.status !== OrderStatus.CANCELLED) {
+            throw new Error(CANCELLED_IS_FINAL);
+          }
+
+          // Cancelling returns the reserved stock to inventory.
+          if (parsed.data.status === OrderStatus.CANCELLED && existing.status !== OrderStatus.CANCELLED) {
+            for (const item of existing.items) {
+              await transaction.product.updateMany({
+                where: { id: item.productId },
+                data: { inventory: { increment: item.quantity } },
+              });
+            }
+          }
+
+          return transaction.order.update({
+            where: { id },
+            data: { status: parsed.data.status },
+            include: {
+              user: { select: { id: true, name: true, email: true, role: true } },
+              items: {
+                include: {
+                  product: { select: { id: true, name: true, category: true, price: true } },
+                },
               },
             },
-          },
+          });
         });
       },
-      () => {
+      writeFallback(() => {
         const updated = updateFallbackOrderStatus(id, parsed.data.status);
         if (!updated) throw new Error("Order not found");
         return updated;
-      },
+      }),
       2500,
     );
 
     return NextResponse.json({ order: serializeOrder(order) });
   } catch (error: unknown) {
+    const unavailable = unavailableResponse(error);
+    if (unavailable) return unavailable;
     if (prismaErrorCode(error) === "P2025" || (error instanceof Error && error.message === "Order not found")) {
       return NextResponse.json({ error: "Order not found" }, { status: 404 });
+    }
+    if (error instanceof Error && error.message === CANCELLED_IS_FINAL) {
+      return NextResponse.json({ error: CANCELLED_IS_FINAL }, { status: 409 });
     }
     console.error("[Order PATCH] Error:", error instanceof Error ? error.message : String(error));
     return NextResponse.json({ error: "Failed to update order" }, { status: 500 });

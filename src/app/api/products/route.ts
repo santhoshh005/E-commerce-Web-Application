@@ -3,7 +3,7 @@ import { NextResponse } from "next/server";
 import { z } from "zod";
 
 import { getSessionUser } from "@/lib/auth";
-import { executeWithFallback } from "@/lib/db-retry";
+import { executeWithFallback, unavailableResponse, writeFallback } from "@/lib/db-retry";
 import { createFallbackProduct, getFallbackProducts } from "@/lib/fallback-store";
 import { prisma } from "@/lib/prisma";
 import { ensureStoreSeeded } from "@/lib/seed";
@@ -68,7 +68,7 @@ export async function POST(request: Request) {
         await ensureStoreSeeded();
         return prisma.product.create({ data: parsed.data });
       },
-      () => createFallbackProduct(parsed.data),
+      writeFallback(() => createFallbackProduct(parsed.data)),
       2500,
     );
 
@@ -82,6 +82,8 @@ export async function POST(request: Request) {
       },
     );
   } catch (error: unknown) {
+    const unavailable = unavailableResponse(error);
+    if (unavailable) return unavailable;
     const message = error instanceof Error ? error.message : String(error);
     console.error("[Products POST] Error:", message);
     return NextResponse.json(

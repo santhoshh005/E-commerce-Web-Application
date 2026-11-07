@@ -4,6 +4,7 @@ import React, { useState } from "react";
 import { useStore } from "@/context/store-context";
 import { formatMoney, getProductImage } from "@/lib/utils";
 import { Badge } from "@/components/ui/badge";
+import { ChangePasswordForm } from "@/components/profile/change-password-form";
 import { ChevronDown, Package, User, Mail, ShieldCheck } from "lucide-react";
 
 export function UserDashboard() {
@@ -70,6 +71,8 @@ export function UserDashboard() {
         </div>
       </section>
 
+      <ChangePasswordForm />
+
       {/* Orders List Section */}
       <section className="space-y-4">
         <h3 className="text-lg font-bold text-foreground flex items-center gap-2">
@@ -130,7 +133,7 @@ export function UserDashboard() {
 
                       <div>
                         <span className="text-[10px] font-bold uppercase tracking-wider text-muted-txt block">
-                          Total Charging
+                          Order Total
                         </span>
                         <span className="font-bold text-foreground text-sm">
                           {formatMoney(order.total)}

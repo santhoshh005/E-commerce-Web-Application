@@ -186,7 +186,7 @@ export function CheckoutFlow() {
           <div className="flex items-center justify-between border-b border-border-brand px-6 py-5">
             <div>
               <h2 className="text-lg font-bold text-foreground">Secure Checkout</h2>
-              <p className="text-xs text-muted-txt">Complete your order with end-to-end security encryption.</p>
+              <p className="text-xs text-muted-txt">Enter your shipping and payment details to place your order.</p>
             </div>
             <button
               type="button"
@@ -368,7 +368,7 @@ export function CheckoutFlow() {
                     <span className="font-bold text-gold-brand">{createdOrder.id.slice(0, 8).toUpperCase()}</span>
                   </div>
                   <div className="flex justify-between text-muted-txt">
-                    <span>Total Amount Charged:</span>
+                    <span>Order Total:</span>
                     <span className="font-semibold text-foreground">{formatMoney(createdOrder.total)}</span>
                   </div>
                   <div className="flex justify-between text-muted-txt">
@@ -376,7 +376,7 @@ export function CheckoutFlow() {
                     <span className="font-semibold text-foreground">{shippingName}</span>
                   </div>
                   <div className="text-[10px] text-muted-txt border-t border-border-brand pt-2 mt-2 leading-relaxed">
-                    A confirmation invoice has been sent to your email. You can check order fulfillment details in your personal dashboard.
+                    You can track fulfillment for this order in your personal dashboard.
                   </div>
                 </div>
 

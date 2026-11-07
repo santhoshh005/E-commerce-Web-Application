@@ -1,6 +1,8 @@
 // HTTP smoke test against a running server.
 // Usage: BASE_URL=http://localhost:3000 node scripts/smoke-test.mjs
 // Run it against a local/test server only: it registers a user and places an order.
+// Optional: ADMIN_EMAIL / ADMIN_PASSWORD (the server's seed admin) enable the
+// admin checks (order cancellation restocks inventory).
 import assert from "node:assert/strict";
 
 const BASE_URL = process.env.BASE_URL ?? "http://localhost:3000";
@@ -118,6 +120,43 @@ await test("GET /api/orders lists only own orders", async () => {
   assert.ok(json.orders.every((order) => order.user?.email === email || order.userId === json.orders[0].userId));
 });
 
+await test("password change rejects a wrong current password", async () => {
+  const { status } = await call("POST", "/api/auth/password", { currentPassword: "nope-nope", newPassword: "another-pass-456" });
+  assert.equal(status, 400);
+});
+
+await test("password change works and the new password logs in", async () => {
+  const { status } = await call("POST", "/api/auth/password", { currentPassword: "smoke-pass-123", newPassword: "another-pass-456" });
+  assert.equal(status, 200);
+  const old = await call("POST", "/api/auth/login", { email, password: "smoke-pass-123" }, { auth: false });
+  assert.equal(old.status, 401);
+  const fresh = await call("POST", "/api/auth/login", { email, password: "another-pass-456" });
+  assert.equal(fresh.status, 200);
+});
+
+if (process.env.ADMIN_EMAIL && process.env.ADMIN_PASSWORD) {
+  const shopperCookie = cookie;
+  await test("admin cancelling an order restocks inventory and is final", async () => {
+    const stockOf = async () =>
+      (await call("GET", "/api/products")).json.products.find((p) => p.id === product.id).inventory;
+    const before = await stockOf();
+    const { json: placed } = await call("POST", "/api/orders", { items: [{ productId: product.id, quantity: 2 }] });
+    assert.equal(await stockOf(), before - 2);
+
+    const admin = await call("POST", "/api/auth/login", { email: process.env.ADMIN_EMAIL, password: process.env.ADMIN_PASSWORD });
+    assert.equal(admin.status, 200);
+    assert.equal(admin.json.user.role, "ADMIN");
+
+    const cancelled = await call("PATCH", `/api/orders/${placed.order.id}`, { status: "CANCELLED" });
+    assert.equal(cancelled.status, 200);
+    assert.equal(await stockOf(), before);
+
+    const reopen = await call("PATCH", `/api/orders/${placed.order.id}`, { status: "PAID" });
+    assert.equal(reopen.status, 409);
+  });
+  cookie = shopperCookie;
+}
+
 await test("logout clears the session", async () => {
   const { status } = await call("POST", "/api/auth/logout");
   assert.equal(status, 200);
@@ -134,6 +173,14 @@ await test("forged JWT is rejected", async () => {
     name: "Hack", description: "should never be created", category: "X", price: 100, inventory: 1,
   });
   assert.equal(status, 403);
+});
+
+await test("repeated failed logins are rate limited (429)", async () => {
+  const statuses = [];
+  for (let attempt = 0; attempt < 10; attempt += 1) {
+    statuses.push((await call("POST", "/api/auth/login", { email, password: "wrong-password" }, { auth: false })).status);
+  }
+  assert.ok(statuses.includes(429), `expected a 429, got ${statuses.join(",")}`);
 });
 
 console.log(`\n${passed} smoke checks passed against ${BASE_URL}`);

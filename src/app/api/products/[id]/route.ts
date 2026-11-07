@@ -3,7 +3,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 
 import { getSessionUser } from "@/lib/auth";
-import { executeWithFallback, prismaErrorCode } from "@/lib/db-retry";
+import { executeWithFallback, prismaErrorCode, unavailableResponse, writeFallback } from "@/lib/db-retry";
 import {
   deleteFallbackProduct,
   updateFallbackProduct,
@@ -54,18 +54,20 @@ export async function PATCH(
           data: parsed.data,
         });
       },
-      () => {
+      writeFallback(() => {
         const fallback = updateFallbackProduct(id, parsed.data);
         if (!fallback) {
           throw new Error("Product not found");
         }
         return fallback;
-      },
+      }),
       2500,
     );
 
     return NextResponse.json({ product });
   } catch (error: unknown) {
+    const unavailable = unavailableResponse(error);
+    if (unavailable) return unavailable;
     if (prismaErrorCode(error) === "P2025" || (error instanceof Error && error.message === "Product not found")) {
       return NextResponse.json({ error: "Product not found" }, { status: 404 });
     }
@@ -94,16 +96,18 @@ export async function DELETE(
         });
         return true;
       },
-      () => {
+      writeFallback(() => {
         const deleted = deleteFallbackProduct(id);
         if (!deleted) throw new Error("Product not found");
         return true;
-      },
+      }),
       2500,
     );
 
     return NextResponse.json({ success: true });
   } catch (error: unknown) {
+    const unavailable = unavailableResponse(error);
+    if (unavailable) return unavailable;
     const code = prismaErrorCode(error);
     if (code === "P2003") {
       return NextResponse.json(

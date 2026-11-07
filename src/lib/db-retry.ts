@@ -1,3 +1,5 @@
+import { NextResponse } from "next/server";
+
 /**
  * Fallback wrapper for database operations.
  * Provides an in-memory fallback when Supabase PostgreSQL is paused
@@ -28,6 +30,42 @@ const CONNECTIVITY_MARKERS = [
 ];
 
 class DatabaseTimeoutError extends Error {}
+
+/** Thrown when the database is down and in-memory writes are disabled. */
+export class DatabaseUnavailableError extends Error {
+  constructor() {
+    super("The store database is temporarily unavailable. Please try again in a minute.");
+    this.name = "DatabaseUnavailableError";
+  }
+}
+
+/**
+ * In-memory writes are not durable (lost on restart, not shared between
+ * server instances), so they are off in production unless
+ * ALLOW_FALLBACK_WRITES=true is set.
+ */
+export function fallbackWritesAllowed() {
+  const flag = process.env.ALLOW_FALLBACK_WRITES;
+  if (flag !== undefined) return flag === "true";
+  return process.env.NODE_ENV !== "production";
+}
+
+/**
+ * Wraps a fallback that writes to the in-memory store. When fallback
+ * writes are disabled, it fails with DatabaseUnavailableError instead.
+ */
+export function writeFallback<T>(operation: () => Promise<T> | T): () => Promise<T> | T {
+  return () => {
+    if (!fallbackWritesAllowed()) throw new DatabaseUnavailableError();
+    return operation();
+  };
+}
+
+/** Returns a 503 response for DatabaseUnavailableError, otherwise null. */
+export function unavailableResponse(error: unknown) {
+  if (!(error instanceof DatabaseUnavailableError)) return null;
+  return NextResponse.json({ error: error.message }, { status: 503, headers: { "Retry-After": "30" } });
+}
 
 export function isConnectivityError(error: unknown): boolean {
   if (error instanceof DatabaseTimeoutError) return true;
